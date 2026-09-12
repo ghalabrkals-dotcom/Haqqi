@@ -77,28 +77,32 @@ export async function loadSubscription(): Promise<Subscription> {
   return (data as Subscription | null) ?? FREE_DEFAULT;
 }
 
+import { createCheckoutSessionFn, openCustomerPortalFn } from "./stripe.functions";
+
 /**
  * Creates a Stripe Checkout Session on the backend and returns the checkout URL.
- * Redirects the user securely to Stripe's hosted checkout page.
+ * Executes on the same-origin Render server (no CORS issues).
  */
 export async function createCheckoutSession(returnUrl?: string): Promise<{ url: string }> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Please sign in to upgrade to Haqqi Plus.");
 
-  const { data, error } = await supabase.functions.invoke("create-checkout-session", {
-    body: {
-      returnUrl: returnUrl || (typeof window !== "undefined" ? window.location.href : undefined),
-    },
-  });
+  const cleanReturn =
+    returnUrl || (typeof window !== "undefined" ? window.location.href : undefined);
 
-  if (error) {
-    throw new Error(error.message || "Failed to initialize Stripe Checkout.");
-  }
-  if (!data?.url) {
-    throw new Error(data?.error || "No checkout URL received from server.");
+  try {
+    const result = await createCheckoutSessionFn({ data: { returnUrl: cleanReturn } });
+    if (result?.url) return result;
+  } catch (err: any) {
+    console.warn("Direct server checkout attempt error, attempting edge fallback:", err);
+    const { data, error } = await supabase.functions.invoke("create-checkout-session", {
+      body: { returnUrl: cleanReturn },
+    });
+    if (!error && data?.url) return { url: data.url };
+    throw new Error(err?.message || error?.message || "Failed to initialize Stripe Checkout.");
   }
 
-  return { url: data.url };
+  throw new Error("No checkout URL received from server.");
 }
 
 /**
@@ -108,20 +112,22 @@ export async function openCustomerPortal(returnUrl?: string): Promise<{ url: str
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Please sign in to manage your subscription.");
 
-  const { data, error } = await supabase.functions.invoke("customer-portal", {
-    body: {
-      returnUrl: returnUrl || (typeof window !== "undefined" ? window.location.href : undefined),
-    },
-  });
+  const cleanReturn =
+    returnUrl || (typeof window !== "undefined" ? window.location.href : undefined);
 
-  if (error) {
-    throw new Error(error.message || "Failed to open Stripe Customer Portal.");
-  }
-  if (!data?.url) {
-    throw new Error(data?.error || "No billing portal URL received.");
+  try {
+    const result = await openCustomerPortalFn({ data: { returnUrl: cleanReturn } });
+    if (result?.url) return result;
+  } catch (err: any) {
+    console.warn("Direct server portal attempt error, attempting edge fallback:", err);
+    const { data, error } = await supabase.functions.invoke("customer-portal", {
+      body: { returnUrl: cleanReturn },
+    });
+    if (!error && data?.url) return { url: data.url };
+    throw new Error(err?.message || error?.message || "Failed to open Stripe Customer Portal.");
   }
 
-  return { url: data.url };
+  throw new Error("No billing portal URL received.");
 }
 
 export function useSubscription() {
